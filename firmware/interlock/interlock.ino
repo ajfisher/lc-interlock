@@ -28,17 +28,17 @@ void loop() {
     return;
   }
 
-/**  Serial.print("ROM =");
+  Serial.print("ROM =");
   for( i = 0; i < 8; i++) {
     Serial.write(' ');
     Serial.print(addr[i], HEX);
-  }**/
-/**
+  }
+
   if (OneWire::crc8(addr, 7) != addr[7]) {
       Serial.println("CRC is not valid!");
       return;
   }
-  Serial.println();**/
+  Serial.println();
 
 
 	if (memcmp(addr, temp1_ID, sizeof(addr)) == 0) {

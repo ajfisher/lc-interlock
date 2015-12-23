@@ -56,4 +56,8 @@ made available at http://www.pjrc.com/teensy/td_libs_OneWire.html original
 copyright and licences are maintained in the original files included within this
 repository.
 
+This software includes the Dallas Temperature library by Miles Burton made
+available at https://github.com/milesburton/Arduino-Temperature-Control-Library.
+Original copyright and licenses are maintained in the original files included
+within this repository.
 
