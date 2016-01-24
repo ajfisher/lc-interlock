@@ -1,115 +1,108 @@
 #include "./OneWire.h"
+#include "./DallasTemperature.h"
 
-OneWire  ds(2);  // on pin 2
+OneWire  ds(3);  // on pin 2
+DallasTemperature temps(&ds);
 
-uint8_t temp1_ID[8] = {0x28, 0xFF, 0x6C, 0xF3, 0x64, 0x15, 0x2, 0x15};
-uint8_t temp2_ID[8] = {0x28, 0xFF, 0xD2, 0xE1, 0x64, 0x15, 0x2, 0xC7};
-uint8_t temp3_ID[8] = {0x28, 0xFF, 0xDB, 0x8D, 0x64, 0x15, 0x2, 0xB6};
+#define TEMPERATURE_PRECISION 9
+
+DeviceAddress inflowTemp 	= {0x28, 0xFF, 0x6C, 0xF3, 0x64, 0x15, 0x2, 0x15};
+DeviceAddress outflowTemp  	= {0x28, 0xFF, 0xD2, 0xE1, 0x64, 0x15, 0x2, 0xC7};
+DeviceAddress tankTemp		= {0x28, 0xFF, 0xDB, 0x8D, 0x64, 0x15, 0x2, 0xB6};
+
+#define FLOW_RATE_MEASURE_INTERVAL 1000.0
+
+byte flowInterrupt = 0; // digital 2
+byte flowPin = 2; //
+
+volatile byte pulseCount;
+
+uint16_t pulsesPerLitre = 450;
+float flowPeriods = 60000.0 / FLOW_RATE_MEASURE_INTERVAL; // used to calc flow per min.
+
+float flowRate;
+uint32_t flowOldTime;
 
 void setup() {
     Serial.begin(9600);
     Serial.println("Interlock stuff");
+
+    // temperature sensors
+    temps.begin();
+    Serial.print("Locating sensors...");
+    Serial.print("found ");
+    Serial.print(temps.getDeviceCount());
+    Serial.println(" devices");
+
+	temps.setResolution(inflowTemp, TEMPERATURE_PRECISION);
+	temps.setResolution(outflowTemp, TEMPERATURE_PRECISION);
+	temps.setResolution(tankTemp, TEMPERATURE_PRECISION);
+
+    delay(5000);
+    // flow meter.
+    pulseCount = 0;
+    flowOldTime = 0;
+    flowRate = 0;
+
+    attachInterrupt(flowInterrupt, pulseCounter, FALLING);
 }
 
-
 void loop() {
-  byte i;
-  byte present = 0;
-  byte type_s;
-  byte data[12];
-  byte addr[8];
-  float celsius;
 
-  if ( !ds.search(addr)) {
-    Serial.println("No more addresses.");
-    Serial.println();
-    ds.reset_search();
-    delay(10000);
-    return;
-  }
+    if ((millis() - flowOldTime) > FLOW_RATE_MEASURE_INTERVAL) {
+        calculate_flow_rate();
 
-  Serial.print("ROM =");
-  for( i = 0; i < 8; i++) {
-    Serial.write(' ');
-    Serial.print(addr[i], HEX);
-  }
-
-  if (OneWire::crc8(addr, 7) != addr[7]) {
-      Serial.println("CRC is not valid!");
-      return;
-  }
-  Serial.println();
-
-
-	if (memcmp(addr, temp1_ID, sizeof(addr)) == 0) {
-        Serial.println("ARRAYS EQUAL");
-    } else {
-        Serial.println("ARRAYS UNEQUAL");
+		temps.requestTemperatures();
+		Serial.print("Out ");
+		printTemperature(outflowTemp);
+		Serial.println();
     }
+}
 
-/**  // the first ROM byte indicates which chip
-  switch (addr[0]) {
-    case 0x10:
-      Serial.println("  Chip = DS18S20");  // or old DS1820
-      type_s = 1;
-      break;
-    case 0x28:
-      Serial.println("  Chip = DS18B20");
-      type_s = 0;
-      break;
-    case 0x22:
-      Serial.println("  Chip = DS1822");
-      type_s = 0;
-      break;
-    default:
-      Serial.println("Device is not a DS18x20 family device.");
-      return;
-  }**/
+void calculate_flow_rate() {
+    // does the actual checking to see what the flow rate is and updates flowrate
+    // global var appropriately
 
-  ds.reset();
-  ds.select(addr);
-  ds.write(0x44, 1);        // start conversion, with parasite power on at the end
+    detachInterrupt(flowInterrupt);
 
-  delay(1000);     // maybe 750ms is enough, maybe not
-  // we might do a ds.depower() here, but the reset will take care of it.
+    Serial.print("pc: ");
+    Serial.println(pulseCount);
+    // calculate flow rate.
+    // this normalises the pulse count to a standardised time period,
+    // namely FLOW_RATE_MEASURE_INTERVAL.
+    float pcn = (float)FLOW_RATE_MEASURE_INTERVAL / (millis() - flowOldTime) * pulseCount;
+    float litres_counted = pcn / pulsesPerLitre;
+    flowRate = flowPeriods * litres_counted;
 
-  present = ds.reset();
-  ds.select(addr);
-  ds.write(0xBE);         // Read Scratchpad
+    Serial.print("Flow Rate ");
+    Serial.println(flowRate, DEC);
 
-  Serial.print("  Data = ");
-  Serial.print(present, HEX);
-  Serial.print(" ");
-  for ( i = 0; i < 9; i++) {           // we need 9 bytes
-    data[i] = ds.read();
-    Serial.print(data[i], HEX);
-    Serial.print(" ");
+    flowOldTime = millis();
+
+    pulseCount = 0;
+
+    attachInterrupt(flowInterrupt, pulseCounter, FALLING);
+}
+
+/** ISR for pulsecounter **/
+void pulseCounter() {
+    // just increment, don't do anything else.
+    pulseCount++;
+}
+
+void printAddress(DeviceAddress deviceAddress)
+{
+  for (uint8_t i = 0; i < 8; i++)
+  {
+    // zero pad the address if necessary
+    if (deviceAddress[i] < 16) Serial.print("0");
+    Serial.print(deviceAddress[i], HEX);
   }
-  Serial.print(" CRC=");
-  Serial.print(OneWire::crc8(data, 8), HEX);
-  Serial.println();
+}
 
-  // Convert the data to actual temperature
-  // because the result is a 16 bit signed integer, it should
-  // be stored to an "int16_t" type, which is always 16 bits
-  // even when compiled on a 32 bit processor.
-  int16_t raw = (data[1] << 8) | data[0];
-  if (type_s) {
-    raw = raw << 3; // 9 bit resolution default
-    if (data[7] == 0x10) {
-      // "count remain" gives full 12 bit resolution
-      raw = (raw & 0xFFF0) + 12 - data[6];
-    }
-  } else {
-    byte cfg = (data[4] & 0x60);
-    // at lower res, the low bits are undefined, so let's zero them
-    if (cfg == 0x00) raw = raw & ~7;  // 9 bit resolution, 93.75 ms
-    else if (cfg == 0x20) raw = raw & ~3; // 10 bit res, 187.5 ms
-    else if (cfg == 0x40) raw = raw & ~1; // 11 bit res, 375 ms
-    //// default is 12 bit resolution, 750 ms conversion time
-  }
-  celsius = (float)raw / 16.0;
-  Serial.print("  Temperature = ");
-  Serial.print(celsius);
-  Serial.println(" Celsius ");
+void printTemperature(DeviceAddress deviceAddress)
+{
+  float tempC = temps.getTempC(deviceAddress);
+  Serial.print("Temp C: ");
+  Serial.print(tempC);
 }
