@@ -6,11 +6,17 @@ DallasTemperature temps(&ds);
 
 #define TEMPERATURE_PRECISION 9
 
+#define TEMP_UPPER_RANGE 28.5
+#define TEMP_LOWER_RANGE 10.0
+
 DeviceAddress inflowTemp 	= {0x28, 0xFF, 0x6C, 0xF3, 0x64, 0x15, 0x2, 0x15};
 DeviceAddress outflowTemp  	= {0x28, 0xFF, 0xD2, 0xE1, 0x64, 0x15, 0x2, 0xC7};
 DeviceAddress tankTemp		= {0x28, 0xFF, 0xDB, 0x8D, 0x64, 0x15, 0x2, 0xB6};
 
+float temperatures[3];
+
 #define FLOW_RATE_MEASURE_INTERVAL 1000.0
+#define FLOW_RATE_LOWER 1.2
 
 byte flowInterrupt = 0; // digital 2
 byte flowPin = 2; //
@@ -52,11 +58,47 @@ void loop() {
     if ((millis() - flowOldTime) > FLOW_RATE_MEASURE_INTERVAL) {
         calculate_flow_rate();
 
-		temps.requestTemperatures();
-		Serial.print("Out ");
-		printTemperature(outflowTemp);
+        update_temperatures();
+
+        Serial.print("In ");
+		Serial.print(temperatures[0]);
+        Serial.print(" Out ");
+        Serial.print(temperatures[1]);
+        Serial.print(" Tank ");
+        Serial.print(temperatures[2]);
 		Serial.println();
     }
+
+    // now we do warning checks.
+    alarm_checks();
+
+    // TODO switch relay based on alarm.
+}
+
+
+bool alarm_checks() {
+
+    // test flow rate to see if too low
+    bool flowAlarm = false;
+    if (flowRate < FLOW_RATE_LOWER) {
+        flowAlarm = true;
+    }
+
+    // test all three temps and make sure they are in healthy range
+    bool tempAlarm = false;
+    for (uint8_t i=0; i < 3; i++) {
+        if (temperatures[i] > TEMP_UPPER_RANGE || temperatures[i] < TEMP_LOWER_RANGE) {
+            tempAlarm = true;
+        }
+    }
+
+    if (flowAlarm || tempAlarm) {
+        return (true);
+    } else {
+        return(false);
+    }
+
+    return(true);
 }
 
 void calculate_flow_rate() {
@@ -84,21 +126,21 @@ void calculate_flow_rate() {
     attachInterrupt(flowInterrupt, pulseCounter, FALLING);
 }
 
+void update_temperatures() {
+    // updates the temperature values;
+	temps.requestTemperatures();
+    temperatures[0] = temps.getTempC(inflowTemp);
+    temperatures[1] = temps.getTempC(outflowTemp);
+    temperatures[2] = temps.getTempC(tankTemp);
+}
+
 /** ISR for pulsecounter **/
 void pulseCounter() {
     // just increment, don't do anything else.
     pulseCount++;
 }
 
-void printAddress(DeviceAddress deviceAddress)
-{
-  for (uint8_t i = 0; i < 8; i++)
-  {
-    // zero pad the address if necessary
-    if (deviceAddress[i] < 16) Serial.print("0");
-    Serial.print(deviceAddress[i], HEX);
-  }
-}
+
 
 void printTemperature(DeviceAddress deviceAddress)
 {
